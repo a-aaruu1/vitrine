@@ -30,6 +30,30 @@ static void appendTree(UIView *view, NSUInteger depth, NSMutableString *out) {
     if (view.hidden) [line appendString:@" hidden"];
     if (view.layer.mask) [line appendString:@" masked"];
     if (view.clipsToBounds) [line appendString:@" clips"];
+    // What draws black without a background colour: an opaque layer with no fill, a layer's own opacity, filters and
+    // a picture in the layer itself, and sublayers that are not views (their fill, their picture, a gradient). Not
+    // view.opaque, which is YES on nearly every view.
+    if (view.layer.opaque) [line appendString:@" opaque"];
+    if (view.layer.opacity < 1) [line appendFormat:@" op=%.2f", view.layer.opacity];
+    if (view.layer.filters.count) [line appendFormat:@" filters=%lu", (unsigned long)view.layer.filters.count];
+    if (view.layer.compositingFilter) [line appendFormat:@" comp=%@", view.layer.compositingFilter];
+    if (view.layer.contents && ![view isKindOfClass:UIImageView.class]) [line appendString:@" contents"];
+    if (view.layer.shouldRasterize) [line appendString:@" raster"];
+    if (![NSStringFromClass(view.layer.class) isEqualToString:@"CALayer"]) [line appendFormat:@" layer=%@", NSStringFromClass(view.layer.class)];
+    NSMutableArray<NSString *> *loose = [NSMutableArray array];
+    NSSet<CALayer *> *viewLayers = [NSSet setWithArray:[view.subviews valueForKey:@"layer"]];
+    for (CALayer *sub in view.layer.sublayers) {
+        if ([viewLayers containsObject:sub]) continue;
+        NSMutableString *desc = [NSMutableString stringWithString:NSStringFromClass(sub.class)];
+        if (sub.backgroundColor && CGColorGetAlpha(sub.backgroundColor) > 0) [desc appendFormat:@" bg=%@", hexColor(sub.backgroundColor)];
+        if (sub.contents) [desc appendString:@" contents"];
+        if ([sub isKindOfClass:CAGradientLayer.class] && ((CAGradientLayer *)sub).colors.count) [desc appendString:@" gradient"];
+        if (sub.hidden) [desc appendString:@" hidden"];
+        if (sub.opacity < 1) [desc appendFormat:@" op=%.2f", sub.opacity];
+        [desc appendFormat:@" %@", NSStringFromCGRect(sub.frame)];
+        [loose addObject:desc];
+    }
+    if (loose.count) [line appendFormat:@" sublayers=[%@]", [loose componentsJoinedByString:@"; "]];
     if (view.accessibilityIdentifier.length) [line appendFormat:@" id=%@", view.accessibilityIdentifier];
     // Controls and accessibility elements, the views the phone driver's `tap --label` finds.
     if (([view isKindOfClass:UIControl.class] || (view.isAccessibilityElement && ![view isKindOfClass:UILabel.class])) && view.accessibilityLabel.length) {
@@ -71,8 +95,10 @@ static NSString *describeValue(id value) {
 static void appendModState(NSMutableString *out) {
     NSDictionary *stored = [NSUserDefaults.standardUserDefaults persistentDomainForName:NSBundle.mainBundle.bundleIdentifier] ?: @{};
     [out appendFormat:@"== mod\nstock %@\n", [stored[SGKeyStock] boolValue] ? @"yes" : @"no"];
-    NSArray<NSString *> *local = @[@"spotifyglass.adblock.counts", @"spotifyglass.privacy.counts", @"spotifyglass.update.",
-                                   @"spotifyglass.signing.", @"spotifyglass.onboarding.", @"spotifyglass.navbar.stock", @"spotifyglass.redesign.navbar.stock",
+    NSArray<NSString *> *local = @[@"spotifyglass.adblock.counts", @"spotifyglass.privacy.counts",
+                                   @"spotifyglass.sponsorblock.skipCount", @"spotifyglass.sponsorblock.timeSaved",
+                                   @"spotifyglass.update.", @"spotifyglass.signing.", @"spotifyglass.onboarding.",
+                                   @"spotifyglass.navbar.stock", @"spotifyglass.redesign.navbar.stock",
                                    @"spotifyglass.musixmatch.token"];
     for (NSString *key in [stored.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
         if (![key hasPrefix:@"spotifyglass."] || [key isEqualToString:SGKeyStock]) continue;

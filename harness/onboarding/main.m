@@ -9,7 +9,9 @@
 //               version, 1.0, is not Spotify's either), whose alert follows about 5 s in
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
+#import <mach-o/dyld.h>
 #import "App/Onboarding/Onboarding.h"
+#import "Shared/Lyrics/Lyrics.h"
 #import "Core/SGPrefs.h"
 
 static BOOL sg_old;
@@ -27,8 +29,20 @@ NSString *SGRedesignUntestedWarning(void) {
     return [NSString stringWithFormat:@"The redesign is built on iOS 26's Liquid Glass. iOS %@ draws a blur in its place, and nobody has tested the redesign there: pages can be laid out wrongly, and Spotify can freeze as it starts. If Spotify does not start with it, the next launch goes back to Legacy.", @"17.5"];
 }
 void SGShowSigningFixIfPending(void) {}
+void SGSponsorBlockPreferencesDidChange(void) {}
 // Settings/SGModPage.m, for the Mod Settings rows, which the harness does not show.
 SGModRow *SGWarningRow(NSString *title, NSString *subtitle, void (^action)(void)) { return nil; }
+// Shared/Lyrics/KaraokeSource.x's look for EeveeSpotify, by the loaded image's name alone.
+BOOL SGEeveeSpotifyInjected(void) {
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *image = _dyld_get_image_name(i);
+        if (image && [@(image).lastPathComponent caseInsensitiveCompare:@"EeveeSpotify.dylib"] == NSOrderedSame) return YES;
+    }
+    return NO;
+}
+// LiveActivitySettings.m and HapticsSettings.m: what the install's Info.plist says.
+BOOL SGLiveActivityAllowedByInstall(void) { return [[NSBundle.mainBundle objectForInfoDictionaryKey:@"NSSupportsLiveActivities"] boolValue]; }
+BOOL SGMusicHapticsListedByInstall(void) { return [[NSBundle.mainBundle objectForInfoDictionaryKey:@"MusicHapticsSupported"] boolValue]; }
 
 @interface Delegate : UIResponder <UIApplicationDelegate>
 @end

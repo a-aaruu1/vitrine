@@ -19,6 +19,19 @@ typedef NS_ENUM(NSInteger, SGLockArtwork) {
 };
 // Off below iOS 26, which has no animated artwork on the lock screen.
 SGLockArtwork SGLockScreenArtwork(void);
+// Below iOS 26 with a jailbreak: the song's Canvas, or Apple Music's animated cover, in place of the lock screen's own
+// large cover (a tap on its player's cover opens it), by Vitrine Addon in SpringBoard (Shared/Haptics/SGHapticRelay.h).
+// Off until switched on.
+#define SGKeyLockCoverAddon @"spotifyglass.lockscreen.cover.addon"
+// The song's lyrics over that Canvas, drawn live as the lyrics page draws them (LockScreenAddonLyrics.x), with a button
+// in the lock screen player's header, in the place of its small cover while the large one is open, between them and the
+// Canvas. On until switched off; nothing shows until the Canvas switch is on too, and nothing is fetched until the lyrics
+// are picked with the button.
+#define SGKeyLockCoverLyrics @"spotifyglass.lockscreen.cover.addon.lyrics"
+// Both switches on below iOS 26: the song's lines are wanted for the large cover, under either look.
+BOOL SGLockCoverLyricsWanted(void);
+// Whether the lyrics are picked with the large cover's button, as SpringBoard last told Spotify. Main queue.
+BOOL SGLockCoverLyricsPicked(void);
 // Under Moving artwork with lyrics, LyricsArtwork.x says whether the playing track has no synced lines (YES), so
 // LockScreenMotion.x shows its moving artwork plain, as Moving artwork does, or has them (NO), so it takes it off
 // for the lyrics' clips. Main queue.
@@ -62,7 +75,10 @@ void SGMotionSongsWithISRC(NSString *isrc, void (^done)(NSArray *songs));
 #define SGKeyMotionSources @"spotifyglass.motion.sources"
 NSArray<NSString *> *SGMotionSourceOrder(void);
 BOOL SGMotionAppleMusicOn(void);
-// The track's Canvas video as its metadata names it (canvas.url, of a canvas.type that is a video), or nil.
+// The redesign moves a track's canvas.* metadata keys under this prefix, so Spotify's player makes no Canvas cell.
+#define SGMotionHiddenCanvas @"spotifyglass."
+// The track's Canvas video as its metadata names it (canvas.url, of a canvas.type that is a video, under either
+// name), or nil.
 NSURL *SGMotionCanvasIn(NSDictionary *metadata);
 // The first clip the order finds for the track `uri`, as a local file, or nil, and the key of the source it
 // came from. `canvas` is the track's Canvas video, nil when its metadata names none, and then Spotify's

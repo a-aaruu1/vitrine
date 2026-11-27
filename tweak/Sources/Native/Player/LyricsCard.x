@@ -15,7 +15,8 @@ static char kCardGlassKey;
 
 // The cell around the card, the view Spotify paints and rounds.
 static UIView *cellAround(UIView *view) {
-    Class cell = NSClassFromString(@"_TtC12Element_List18CollectionViewCell");
+    static Class cell;
+    if (!cell) cell = NSClassFromString(@"_TtC12Element_List18CollectionViewCell");
     for (UIView *v = view; v; v = v.superview) {
         if ([v isKindOfClass:cell]) return v;
     }
@@ -33,7 +34,7 @@ static UIView *cellAround(UIView *view) {
     // pass of its own; Native/Appearance/Repaint.x keeps it clear in between.
     sg_lyricsCardRoot = cell;
     SGStripBackgrounds(cell);
-    UIVisualEffectView *glass = SGGlassFor(cell, &kCardGlassKey);
+    UIView *glass = SGGlassFor(cell, &kCardGlassKey);
     // Dark whatever the system is set to, as the player's header panes are (Player.x): light glass under
     // white lyrics otherwise, on a phone in light mode.
     if (glass.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) glass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;

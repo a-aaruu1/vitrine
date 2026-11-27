@@ -14,22 +14,29 @@
 // community translations are asked in (the redesign's lyrics being where translations show), whether lines timed only by the line are swept word by word, whether lines in other alphabets show again in Latin letters, and how much later than the song every line shows.
 SGModSection *SGLyricsSourcesSection(BOOL namingSource);
 SGModRow *SGLockScreenLyricsRow(void);
+SGModRow *SGLockScreenTranslationRow(void);
 SGModRow *SGLyricsTranslationLanguageRow(void);
 SGModRow *SGLyricsWordTimingRow(void);
 SGModRow *SGLyricsRomanisedRow(void);
+SGModRow *SGLyricsRomanisedReplaceRow(void);
 SGModRow *SGLyricsDelayRow(void);
 
 // Shows a line written in another alphabet (Japanese, Korean, Chinese, Cyrillic, Greek, Thai, Arabic,
 // Hebrew, Devanagari...) again under itself in Latin letters, before its translation. Off by default.
 // Only the redesign's lyrics view draws it, and it applies at once: the switch posts the notification.
 #define SGKeyLyricsRomanised @"spotifyglass.lyricsRomanised"
+// Shows the line in Latin letters in place of the original script, instead of under it.
+#define SGKeyLyricsRomanisedReplace @"spotifyglass.lyricsRomanisedReplace"
 extern NSNotificationName const SGLyricsRomanisedDidChangeNotification;
+@class SGKaraokeLine;
 // Romanise.m: the text in Latin letters, offline; nil where it has no letter of another script, or
 // reads the same. `japanese` reads kanji the Japanese way, for a song SGLyricsLooksJapanese says is
 // (a line of kanji alone would read as Chinese). Safe off the main thread, and kept per text.
 NSString *SGLyricsRomanised(NSString *text, BOOL japanese);
+// The line in Latin letters: the source's pronunciation where it has one, or SGLyricsRomanised over the line's words.
+// nil where it has no letter of another script.
+SGKaraokeLine *SGLyricsRomanisedLine(SGKaraokeLine *line, BOOL japanese);
 // Whether any of the lines has kana in it.
-@class SGKaraokeLine;
 BOOL SGLyricsLooksJapanese(NSArray<SGKaraokeLine *> *lines);
 
 // Sweeps a line timed only by the line word by word, on the estimate of when each word is sung, as if
@@ -86,8 +93,23 @@ typedef NS_ENUM(NSUInteger, SGKaraokeAlign) {
 @property (nonatomic) BOOL translationMade;
 @end
 
+// Whether any of the lines carries a translation.
+BOOL SGKaraokeHasTranslations(NSArray<SGKaraokeLine *> *lines);
 // The line as one string, a space between the words that are not joined.
 NSString *SGKaraokeLineText(SGKaraokeLine *line);
+// The letters and digits of a text alone, lowercased: a pronunciation or a translation equal to its
+// line's this way reads the same as the line and is left out.
+NSString *SGLyricsBareText(NSString *text);
+// The lines as plist values (arrays, dictionaries, strings and numbers) for a file another process reads, as the
+// lock screen's large cover does (Vitrine Addon), and back: every field of each line and word, the backing and the
+// pronunciation within. A value that does not read gives nil.
+NSArray *SGKaraokeLinesPlist(NSArray<SGKaraokeLine *> *lines);
+NSArray<SGKaraokeLine *> *SGKaraokeLinesFromPlist(id plist);
+// The redesign's lyrics look as plist values, for the lock screen's large cover to draw its lines like the lyrics
+// page: "size", "spacing", "blur", "glow" and "wave" (Redesigned/Lyrics/LyricsLook.h), "order" (SGKaraokeText
+// values, largest first) and whether the lyrics menu shows "pronunciation" and "translation". Declared here for
+// Shared to ask and defined by Redesigned/Lyrics/LyricsLook.m, under either look.
+NSDictionary *SGLyricsLookPlist(void);
 // When the singing of a line is over: its own end, or its backing's when that runs on past it.
 NSInteger SGKaraokeSungEnd(SGKaraokeLine *line);
 // The one line a place with room for one names as the one being sung at `ms`. Two voices can sing
@@ -95,6 +117,13 @@ NSInteger SGKaraokeSungEnd(SGKaraokeLine *line);
 // this is the earliest line still being sung; between lines, the last one begun; -1 before the first.
 // The lock screen and the Live Activity show this one.
 NSInteger SGKaraokeLeadLine(NSArray<SGKaraokeLine *> *lines, NSInteger ms);
+// Past a line's end by this much, with the next line at least this far off, the lock screen lets the line go.
+static const NSInteger SGKaraokeBreakMs = 4000;
+// The ms after `position` at which the lock screen's line can next change, -1 for never: where SGKaraokeLeadLine
+// or a break turns over (each line's start, SGKaraokeBreakMs before it, its sung end, and a ms past
+// SGKaraokeBreakMs after its end and its sung end), and the word starts of line `wordsOf`, -1 for none. Some are
+// only a wake that finds the same line.
+NSInteger SGKaraokeMsToChange(NSArray<SGKaraokeLine *> *lines, NSInteger position, NSInteger wordsOf);
 // Whether the text is written in a script that does not space its words, so the pieces of a line
 // are words in their own right rather than halves of one.
 BOOL SGKaraokeUnspacedScript(NSString *text);
@@ -105,6 +134,19 @@ void SGKaraokeAlignVoices(NSArray<SGKaraokeLine *> *lines);
 // A color-lyrics body, protobuf or JSON, as lines: timed by the line where Spotify synced it, plain
 // (SGKaraokeTimingNone) where it did not; nil for a body with no lines.
 NSArray<SGKaraokeLine *> *SGKaraokeLinesFromBody(NSData *body);
+// One timed piece of a line as a source sends it, before the pieces are run together into words: its
+// text without the spaces around it, when it is sung, and whether a space stood before or after it. A
+// piece with no text is a space.
+@interface SGKaraokePiece : NSObject
+@property (nonatomic, copy) NSString *text;
+@property (nonatomic) NSInteger start, end;
+@property (nonatomic) BOOL spaceBefore, spaceAfter;
+@end
+// A line timed by the word from its pieces. A piece with no space between it and the one before runs
+// on into that one's word ("wan", "ted" is "wanted"), sung until the later of the two ends; a piece of
+// an unspaced script is a word of its own, joined to the one before. The line ends at `end`, or at its
+// last word when that is later. nil when no piece has text.
+SGKaraokeLine *SGKaraokePieceLine(NSArray<SGKaraokePiece *> *pieces, NSInteger start, NSInteger end);
 // Lines timed only by their starts, the words inside them estimated; a ♪ or empty text is a break.
 NSArray<SGKaraokeLine *> *SGKaraokeEstimatedLines(NSArray<NSNumber *> *starts, NSArray<NSString *> *texts);
 // Lines with no time at all, for lyrics that come as plain text; a ♪ or empty text is dropped.
@@ -134,6 +176,9 @@ void SGKaraokeRequestLyrics(NSString *trackID);
 // Asks Spotify's JSON lyrics for the track once, and keeps its lines only if they are more finely
 // timed than the ones kept: the lyrics view was left with plain text, and Spotify may have it timed.
 void SGKaraokeAskSpotifyForTiming(NSString *trackID);
+// Forgets the track's lines and, for the track playing, asks for them again as on a first play: the sources'
+// order walked, then Spotify's own weighed against the answer. Main queue.
+void SGKaraokeAskAgain(NSString *trackID);
 // Whether EeveeSpotify is injected alongside the mod.
 BOOL SGEeveeSpotifyInjected(void);
 // EeveeSpotify is injected and answers Spotify's lyrics, by its own settings (lyricsSource, and
@@ -158,5 +203,5 @@ id SGKaraokePlayer(void);                // SPTEsperantoPlayer, nil before the a
 // A track the player has reported, by its base62 id; nil for one it has not played this session.
 @class SPTPlayerTrack;
 SPTPlayerTrack *SGKaraokeTrackFor(NSString *trackID);
-// Keeps a track seen elsewhere, so a source can name it before the player has reported it.
-void SGKaraokeRememberTrack(SPTPlayerTrack *track);
+// Keeps a track seen elsewhere, by its base62 id, so a source can name it before the player has reported it.
+void SGKaraokeRememberTrack(SPTPlayerTrack *track, NSString *trackID);

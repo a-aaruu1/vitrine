@@ -44,6 +44,12 @@ static const CGFloat kRowHeight = 56, kSliderBlockHeight = 72, kSwitchRowHeight 
 // the redesign's Kit: the sheet's side margin, the gap everything else is a multiple of, and a spring
 // that settles without overshooting.
 static const CGFloat kSideMargin = 16, kGrid = 8;
+// The panel's room over its first slider. Below iOS 26 it stands on the mod's glass, which reaches to the popover's
+// edge with no inset of the system's, and the Speed label all but touched the top; at 16pt its letters still stood
+// 13pt under the edge, closer than the side margin under the popover's large corners.
+static CGFloat panelTop(void) {
+    return SGBelowiOS26() ? 3 * kGrid : kGrid;
+}
 static const NSTimeInterval kOpenDuration = 0.45;
 
 static UIColor *primary(void) {
@@ -291,7 +297,7 @@ static void placeTick(UISlider *slider) {
 
     _row.hidden = self.panelOnly;
     _animatedRow.hidden = self.panelOnly;
-    _panel.frame = CGRectMake(0, self.panelOnly ? kGrid : kRowHeight, width, 3 * kSliderBlockHeight + kSwitchRowHeight + kPanelBottom);
+    _panel.frame = CGRectMake(0, self.panelOnly ? panelTop() : kRowHeight, width, 3 * kSliderBlockHeight + kSwitchRowHeight + kPanelBottom);
     CGFloat y = 0;
     for (NSArray<UIView *> *line in @[@[_speedName, _speedValue, _speed], @[_pitchName, _pitchValue, _pitch],
                                        @[_reverbName, _reverbValue, _reverb]]) {
@@ -300,6 +306,8 @@ static void placeTick(UISlider *slider) {
         line[2].frame = CGRectMake(side, y + 30, width - 2 * side, 36);
         [line[2] layoutIfNeeded];
         placeTick((UISlider *)line[2]);
+        // The redesign's thumb below iOS 26: a white capsule that swells into glass while it is dragged.
+        if (SGRedesignedUI()) SGGlassThumbAttach((UISlider *)line[2], CGSizeMake(34, 22));
         y += kSliderBlockHeight;
     }
     CGSize toggle = [_follows sizeThatFits:CGSizeZero];
@@ -525,7 +533,7 @@ static NSString *pitchText(float pitch) {
 
 // A popover, so it takes the system's glass and closes on a tap outside it. On iPhone a popover becomes a
 // sheet unless its delegate says otherwise.
-@interface SGSpeedPitchPanel : UIViewController <UIPopoverPresentationControllerDelegate>
+@interface SGSpeedPitchPanel : UIViewController
 @end
 
 @implementation SGSpeedPitchPanel
@@ -535,36 +543,23 @@ static NSString *pitchText(float pitch) {
     self.view = block;
 }
 
-- (UIModalPresentationStyle)adaptivePresentationStyleForPresentationController:(UIPresentationController *)controller
-                                                               traitCollection:(UITraitCollection *)traits {
-    return UIModalPresentationNone;
+// Below iOS 26 the popover's own blur gives way to the ⋯ menu's glass; the popover itself stays the system's, so
+// its animation does too. The chrome is made on layout, after UIKit has put it in.
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    SGPlayerStylePanel(self.view);
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    SGPlayerStylePanel(self.view);
 }
 @end
 
 void SGPlayerShowSpeedPitchPanel(UIView *from) {
-    if (!from.window) return;
     SGSpeedPitchPanel *panel = [SGSpeedPitchPanel new];
-    panel.modalPresentationStyle = UIModalPresentationPopover;
-    panel.preferredContentSize = CGSizeMake(320, kGrid + 3 * kSliderBlockHeight + kSwitchRowHeight + kPanelBottom);
-    UIPopoverPresentationController *popover = panel.popoverPresentationController;
-    popover.sourceView = from;
-    popover.sourceRect = from.bounds;
-    popover.permittedArrowDirections = UIPopoverArrowDirectionUp | UIPopoverArrowDirectionDown;
-    popover.delegate = panel;
-    SGPresentDark(panel);
-    // Picked from the system menu, which is still going away: the panel waits for it.
-    __block int tries = 0;
-    __block void (^present)(void);
-    present = ^{
-        UIViewController *top = SGTopController();
-        if ((top.isBeingDismissed || top.isBeingPresented || top.transitionCoordinator) && ++tries < 20) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), present);
-            return;
-        }
-        present = nil;
-        [top presentViewController:panel animated:YES completion:nil];
-    };
-    dispatch_async(dispatch_get_main_queue(), present);
+    panel.preferredContentSize = CGSizeMake(320, panelTop() + 3 * kSliderBlockHeight + kSwitchRowHeight + kPanelBottom);
+    SGPresentPopover(panel, from);
 }
 
 #pragma mark - the player's more button

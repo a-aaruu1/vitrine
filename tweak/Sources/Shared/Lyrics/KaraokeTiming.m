@@ -1,5 +1,4 @@
 #import "Lyrics.h"
-#import "Shared/AdBlock/Protobuf.h"
 
 @implementation SGKaraokeWord
 @end
@@ -56,6 +55,103 @@ NSInteger SGKaraokeLeadLine(NSArray<SGKaraokeLine *> *lines, NSInteger ms) {
     return last;
 }
 
+NSInteger SGKaraokeMsToChange(NSArray<SGKaraokeLine *> *lines, NSInteger position, NSInteger wordsOf) {
+    NSInteger next = NSIntegerMax;
+    for (SGKaraokeLine *line in lines) {
+        NSInteger sungEnd = SGKaraokeSungEnd(line);
+        NSInteger ats[] = {line.start, line.start - SGKaraokeBreakMs, sungEnd, line.end + SGKaraokeBreakMs + 1,
+                           sungEnd + SGKaraokeBreakMs + 1};
+        for (size_t i = 0; i < sizeof ats / sizeof *ats; i++) {
+            if (ats[i] > position && ats[i] < next) next = ats[i];
+        }
+    }
+    if (wordsOf >= 0) {
+        for (SGKaraokeWord *word in lines[(NSUInteger)wordsOf].words) {
+            if (word.start > position && word.start < next) next = word.start;
+        }
+    }
+    return next == NSIntegerMax ? -1 : next - position;
+}
+
+// The letters and digits alone, lowercased: a pronunciation or a translation that reads the same as its
+// line is the line again, as an English line of a Japanese song is spelled out as itself.
+NSString *SGLyricsBareText(NSString *text) {
+    NSMutableString *bare = [NSMutableString string];
+    NSCharacterSet *kept = NSCharacterSet.alphanumericCharacterSet;
+    NSString *lower = text.lowercaseString;
+    for (NSUInteger i = 0; i < lower.length; i++) {
+        unichar c = [lower characterAtIndex:i];
+        if ([kept characterIsMember:c]) [bare appendFormat:@"%C", c];
+    }
+    return bare;
+}
+
+static id lineInPlist(SGKaraokeLine *line) {
+    if (!line) return nil;
+    NSMutableArray *words = [NSMutableArray arrayWithCapacity:line.words.count];
+    for (SGKaraokeWord *word in line.words) [words addObject:@[word.text ?: @"", @(word.start), @(word.end), @(word.joined)]];
+    NSMutableDictionary *plist = [@{@"w": words, @"s": @(line.start), @"e": @(line.end), @"a": @(line.align), @"t": @(line.timing)} mutableCopy];
+    if (line.voice) plist[@"v"] = line.voice;
+    if (line.backing) plist[@"b"] = lineInPlist(line.backing);
+    if (line.pronunciation) plist[@"p"] = lineInPlist(line.pronunciation);
+    if (line.translation) plist[@"tr"] = line.translation;
+    if (line.translationMade) plist[@"tm"] = @YES;
+    return plist;
+}
+
+// A number of the plist, or nil for anything else: a file another process reads may hold anything.
+static NSNumber *numberIn(id value) {
+    return [value isKindOfClass:NSNumber.class] ? value : nil;
+}
+
+// `depth` keeps a line's backing and pronunciation, which hold lines of their own, from nesting past what a line has.
+static SGKaraokeLine *lineFromPlist(id plist, int depth) {
+    if (depth > 2 || ![plist isKindOfClass:NSDictionary.class] || ![plist[@"w"] isKindOfClass:NSArray.class]) return nil;
+    NSMutableArray<SGKaraokeWord *> *words = [NSMutableArray array];
+    for (NSArray *fields in plist[@"w"]) {
+        if (![fields isKindOfClass:NSArray.class] || fields.count < 4 || ![fields[0] isKindOfClass:NSString.class]) return nil;
+        NSNumber *start = numberIn(fields[1]), *end = numberIn(fields[2]), *joined = numberIn(fields[3]);
+        if (!start || !end || !joined) return nil;
+        SGKaraokeWord *word = [SGKaraokeWord new];
+        word.text = fields[0];
+        word.start = start.integerValue;
+        word.end = end.integerValue;
+        word.joined = joined.boolValue;
+        [words addObject:word];
+    }
+    NSNumber *start = numberIn(plist[@"s"]), *end = numberIn(plist[@"e"]);
+    if (!start || !end) return nil;
+    SGKaraokeLine *line = [SGKaraokeLine new];
+    line.words = words;
+    line.start = start.integerValue;
+    line.end = end.integerValue;
+    line.align = numberIn(plist[@"a"]).unsignedIntegerValue == SGKaraokeAlignTrailing ? SGKaraokeAlignTrailing : SGKaraokeAlignLeading;
+    line.timing = MIN(numberIn(plist[@"t"]).unsignedIntegerValue, (NSUInteger)SGKaraokeTimingNone);
+    if ([plist[@"v"] isKindOfClass:NSString.class]) line.voice = plist[@"v"];
+    line.backing = lineFromPlist(plist[@"b"], depth + 1);
+    line.pronunciation = lineFromPlist(plist[@"p"], depth + 1);
+    if ([plist[@"tr"] isKindOfClass:NSString.class]) line.translation = plist[@"tr"];
+    line.translationMade = numberIn(plist[@"tm"]).boolValue;
+    return line;
+}
+
+NSArray *SGKaraokeLinesPlist(NSArray<SGKaraokeLine *> *lines) {
+    NSMutableArray *plist = [NSMutableArray arrayWithCapacity:lines.count];
+    for (SGKaraokeLine *line in lines) [plist addObject:lineInPlist(line)];
+    return plist;
+}
+
+NSArray<SGKaraokeLine *> *SGKaraokeLinesFromPlist(id plist) {
+    if (![plist isKindOfClass:NSArray.class]) return nil;
+    NSMutableArray<SGKaraokeLine *> *lines = [NSMutableArray arrayWithCapacity:[plist count]];
+    for (id entry in plist) {
+        SGKaraokeLine *line = lineFromPlist(entry, 0);
+        if (!line) return nil;
+        [lines addObject:line];
+    }
+    return lines;
+}
+
 // Japanese, Chinese and Korean, and the punctuation set with them. Kana and Hangul are listed as
 // well as the ideographs: a line of either is written without spaces just the same.
 static NSCharacterSet *unspacedScript(void) {
@@ -77,6 +173,47 @@ static NSCharacterSet *unspacedScript(void) {
 
 BOOL SGKaraokeUnspacedScript(NSString *text) {
     return text.length && [text rangeOfCharacterFromSet:unspacedScript()].location != NSNotFound;
+}
+
+@implementation SGKaraokePiece
+@end
+
+SGKaraokeLine *SGKaraokePieceLine(NSArray<SGKaraokePiece *> *pieces, NSInteger start, NSInteger end) {
+    NSMutableArray<SGKaraokeWord *> *words = [NSMutableArray array];
+    SGKaraokeWord *open = nil;   // the word the next piece runs on into
+    BOOL spaced = YES;           // a space has gone by, so the next word is not joined to the last
+    for (SGKaraokePiece *piece in pieces) {
+        if (piece.spaceBefore) {
+            open = nil;
+            spaced = YES;
+        }
+        // A source times a Chinese or Japanese syllable a piece at a time and never spaces them, so
+        // running them together would light a line up whole instead of sweeping it.
+        BOOL unspaced = SGKaraokeUnspacedScript(piece.text);
+        if (piece.text.length && open && !unspaced) {
+            open.text = [open.text stringByAppendingString:piece.text];
+            open.end = MAX(open.end, piece.end);
+        } else if (piece.text.length) {
+            SGKaraokeWord *word = [SGKaraokeWord new];
+            word.text = piece.text;
+            word.start = piece.start;
+            word.end = piece.end;
+            word.joined = !spaced;
+            [words addObject:word];
+            open = unspaced ? nil : word;
+            spaced = NO;
+        }
+        if (!piece.text.length || piece.spaceAfter) {
+            open = nil;
+            spaced = YES;
+        }
+    }
+    if (!words.count) return nil;
+    SGKaraokeLine *line = [SGKaraokeLine new];
+    line.words = words;
+    line.start = start;
+    line.end = MAX(end, words.lastObject.end);
+    return line;
 }
 
 // Thai, Lao, Burmese and Khmer, which leave no space between words either, but whose syllables are a
@@ -269,50 +406,9 @@ NSArray<SGKaraokeLine *> *SGKaraokeInTimeOrder(NSArray<SGKaraokeLine *> *lines) 
     return lines;
 }
 
-#pragma mark - Spotify's own bodies
-
-// Lyrics { 1 data: { 1 time_synchronized, 2 repeated line: { 1 offset_ms, 2 content } }, 2 colors }
-// Not time_synchronized, the lines are plain text and their offsets all 0. The flag alone is not
-// trusted: Spotify's page body has come without it for lines its JSON calls LINE_SYNCED, so any
-// offset past 0 counts as timed too.
-static NSArray<SGKaraokeLine *> *fromProtobuf(NSData *body) {
-    SGPBField *data = SGPBFirst(SGPBParse(body), 1);
-    if (data.wire != 2) return nil;
-    NSArray<SGPBField *> *fields = SGPBParse(data.payload);
-    BOOL synced = SGPBFirst(fields, 1).varint != 0;
-    NSMutableArray<NSNumber *> *starts = [NSMutableArray array];
-    NSMutableArray<NSString *> *texts = [NSMutableArray array];
-    for (SGPBField *field in fields) {
-        if (field.number != 2 || field.wire != 2) continue;
-        NSArray<SGPBField *> *line = SGPBParse(field.payload);
-        int32_t start = (int32_t)SGPBFirst(line, 1).varint;
-        if (start > 0) synced = YES;
-        [starts addObject:@(start)];
-        [texts addObject:SGPBText(SGPBFirst(line, 2)) ?: @""];
+BOOL SGKaraokeHasTranslations(NSArray<SGKaraokeLine *> *lines) {
+    for (SGKaraokeLine *line in lines) {
+        if (line.translation.length) return YES;
     }
-    return synced ? SGKaraokeEstimatedLines(starts, texts) : SGKaraokeStaticLines(texts);
-}
-
-// { "lyrics": { "syncType": "LINE_SYNCED", "lines": [ { "startTimeMs": "1234", "words": "..." } ] } },
-// or "UNSYNCED" with every start 0.
-static NSArray<SGKaraokeLine *> *fromJSON(NSData *body) {
-    NSDictionary *root = [NSJSONSerialization JSONObjectWithData:body options:0 error:nil];
-    NSDictionary *lyrics = [root isKindOfClass:NSDictionary.class] ? root[@"lyrics"] : nil;
-    if (![lyrics isKindOfClass:NSDictionary.class]) return nil;
-    BOOL synced = [lyrics[@"syncType"] isEqual:@"LINE_SYNCED"];
-    if (!synced && ![lyrics[@"syncType"] isEqual:@"UNSYNCED"]) return nil;
-    NSMutableArray<NSNumber *> *starts = [NSMutableArray array];
-    NSMutableArray<NSString *> *texts = [NSMutableArray array];
-    for (NSDictionary *line in lyrics[@"lines"]) {
-        if (![line isKindOfClass:NSDictionary.class]) continue;
-        id words = line[@"words"];
-        [starts addObject:@([line[@"startTimeMs"] integerValue])];
-        [texts addObject:[words isKindOfClass:NSString.class] ? words : @""];
-    }
-    return synced ? SGKaraokeEstimatedLines(starts, texts) : SGKaraokeStaticLines(texts);
-}
-
-NSArray<SGKaraokeLine *> *SGKaraokeLinesFromBody(NSData *body) {
-    if (!body.length) return nil;
-    return ((const uint8_t *)body.bytes)[0] == '{' ? fromJSON(body) : fromProtobuf(body);
+    return NO;
 }

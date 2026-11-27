@@ -49,7 +49,7 @@ static void glassBehindRoundButtons(UIViewController *unit) {
         if (child.hidden || child.alpha == 0 || f.size.width < 20 || f.size.height < 20) continue;
         if (f.size.width > f.size.height * 1.4) continue;
         CGFloat side = MAX(kButtonMin, MIN(MAX(f.size.width, f.size.height), kButtonMax));
-        UIVisualEffectView *glass = SGGlassAt(host, index++);
+        UIView *glass = SGGlassAt(host, index++);
         // Dark whatever the system is set to: the player is presented outside the navigation stacks
         // Spotify makes dark itself, so its panes took the system's light glass on a phone in light mode.
         if (glass.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) glass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
@@ -160,7 +160,14 @@ static UIView *backdropIn(UIView *plane) {
     tilt.layer.shadowOpacity = 0.45;
     tilt.layer.shadowRadius = 32;
     tilt.layer.shadowOffset = CGSizeMake(0, 12);
-    tilt.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:tilt.bounds cornerRadius:kArtRadius].CGPath;
+    // A path made once per size, kept while the layer still holds that very path: one Spotify sets is replaced.
+    static char kShadowPathKey;
+    CGPathRef path = tilt.layer.shadowPath;
+    if (!path || path != (__bridge CGPathRef)objc_getAssociatedObject(tilt, &kShadowPathKey)
+        || !CGRectEqualToRect(CGPathGetBoundingBox(path), tilt.bounds)) {
+        tilt.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:tilt.bounds cornerRadius:kArtRadius].CGPath;
+        objc_setAssociatedObject(tilt, &kShadowPathKey, (__bridge id)tilt.layer.shadowPath, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
 }
 %end
 

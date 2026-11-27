@@ -27,3 +27,25 @@ CGRect SGRNowPlayingArtworkFrameIn(UIView *host);
 // Lays the bar out again at once, into the minimized tab bar's slot or back above the bar
 // (Navbar.h's SGRTabBarInlineSlot); TabBar.x calls it inside its own animation.
 void SGRNowPlayingBarFollowTabBar(void);
+// The player's morph keeps the real tab bar where it is and drops Spotify's tab bar stand-in (BarTransition.x).
+void SGRTabBarStandInDropped(UIView *standIn);
+// How far the bar stands below where Spotify puts it, in the minimized tab bar's row; 0 with the tab bar expanded. The
+// toast over the bar (Kit/SGRSnackbar.x) is moved by the same, which follows the bar from the call above.
+CGFloat SGRNowPlayingBarInlineShift(void);
+// That shift for a toast or tooltip at `frame` (in `window`), if it stands over the bar: its lowest edge is no more than
+// 24pt below where the bar's top would be unshifted (Spotify puts a toast 8pt above the bar). 0 for one laid out lower
+// (the toast a popup raises, at the bottom of the screen with no bar under it), which the shift would take off the screen.
+CGFloat SGRNowPlayingBarShiftOver(CGRect frame, UIWindow *window);
+void SGRSnackbarFollowNowPlayingBar(void);
+// The same for the tooltips over the bar (Kit/SGRTooltip.x).
+void SGRTooltipFollowNowPlayingBar(void);
+// TabBar.x brackets its animated minimize and expand with YES and NO. Meanwhile the bar's own relayout after the Jam
+// strip moves waits for the end, so it cannot snap the bar mid-spring.
+void SGRNowPlayingBarMoving(BOOL moving);
+// The height of Spotify's Jam strip on the bar, 0 outside a Jam (NowPlayingBar.x): the fade under the bars
+// (TabBar.x) reaches that much higher, so the strip's text has it behind it too. The tab bar is laid out
+// again when it changes.
+CGFloat SGRNowPlayingStripHeight(void);
+// The Jam strip in `host`'s coordinates, through any transform between them (the minimized tab bar's row moves the
+// bar by one); CGRectNull outside a Jam or when the strip is not inside `host`.
+CGRect SGRNowPlayingStripFrameIn(UIView *host);

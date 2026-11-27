@@ -20,12 +20,20 @@
 
 static char kPageGlassKey;
 
+// A class's name never changes, so its prefix test is answered once (main thread only, as the layout is).
+static BOOL isTransitionClass(Class cls) {
+    static NSMutableDictionary *answers;
+    if (!answers) answers = [NSMutableDictionary dictionary];
+    NSNumber *answer = answers[(id<NSCopying>)cls];
+    if (!answer) answers[(id<NSCopying>)cls] = answer = @([NSStringFromClass(cls) hasPrefix:@"UITransition"]);
+    return answer.boolValue;
+}
+
 // Up to the presentation: the template views in between paint themselves opaque once, at setup.
 // Only the chain is cleared, not the subtree -- nothing else on the page is painted.
 static UIView *clearAncestors(UIView *view) {
     UIView *top = view;
-    for (UIView *v = view; v && ![v isKindOfClass:UIWindow.class]
-            && ![NSStringFromClass(v.class) hasPrefix:@"UITransition"]; v = v.superview) {
+    for (UIView *v = view; v && ![v isKindOfClass:UIWindow.class] && !isTransitionClass(v.class); v = v.superview) {
         v.layer.backgroundColor = NULL;
         top = v;
     }
@@ -49,7 +57,7 @@ static UIView *clearAncestors(UIView *view) {
     page.layer.backgroundColor = NULL;
     sg_lyricsPageRoot = clearAncestors(page);
 
-    UIVisualEffectView *glass = SGGlassFor(page, &kPageGlassKey);
+    UIView *glass = SGGlassFor(page, &kPageGlassKey);
     // Dark whatever the system is set to, as the player's header panes are (Native/Player/Player.x):
     // light glass under white lyrics otherwise, on a phone in light mode.
     if (glass.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) glass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;

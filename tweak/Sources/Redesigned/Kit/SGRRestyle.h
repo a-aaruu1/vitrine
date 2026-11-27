@@ -13,9 +13,11 @@
 
 // Alpha 0, no touches, hidden from accessibility, and kept so: the instance becomes a runtime subclass
 // of its own class (the way KVO does it, `class` still answers the original) whose setAlpha: and
-// setUserInteractionEnabled: hold those values. For plain UIKit views (a UIImageView, a UILabel); a
-// Swift class, or an instance already observed with KVO, gets the values once instead, re-applied on
-// the next call, and a log line says so once.
+// setUserInteractionEnabled: hold those values. For plain UIKit views (a UIImageView, a UILabel). One of
+// Spotify's Swift classes, or an instance KVO observes, keeps its alpha (only its alpha: touches and
+// accessibility are set again on each call) through an override on its class that holds only the instances
+// suppressed; where neither takes, the values are set once instead, re-applied
+// on the next call, and a log line says so once.
 void SGRSuppress(UIView *view);
 
 // Digits of one width in the label, kept through Spotify's own setText:, setAttributedText: and
@@ -33,18 +35,65 @@ void SGRMonospacedDigits(UILabel *label);
 BOOL SGRObserveImage(UIImageView *view, void (^changed)(UIImageView *view));
 
 // `laidOut` after every layoutSubviews of the view, Spotify's included, for as long as the view lives, by
-// a runtime subclass of the instance like SGRSuppress. A second call replaces the block, and a pass started
-// from inside the block is not reported again. NO when the view cannot be subclassed (one of Spotify's Swift
-// classes, a KVO-observed instance): the caller then has only the passes it hooks itself to work from.
+// a runtime subclass of the instance like SGRSuppress, or, for one of Spotify's own Swift classes, by an
+// override on that class that only ever reports the instances that asked (see SGRObserveImage). A second call
+// replaces the block, and a pass started from inside the block is not reported again. NO when neither took
+// (a KVO-observed instance): the caller then has only the passes it hooks itself to work from.
 //
 // For a screen that arranges Spotify's controls its own way: a parent lays its children out after the
 // hook that placed them has returned, so frames set from an ancestor's pass are the ones overwritten.
 BOOL SGRObserveLayout(UIView *view, void (^laidOut)(UIView *view));
+// Whether `view` has a block from SGRObserveLayout: a caller that must not replace another's asks first.
+BOOL SGRObservesLayout(UIView *view);
+
+// SGRObserveLayout once per view: a view already watched keeps the block it has. For a pass that runs on every layout
+// of the page and watches the same view each time.
+BOOL SGRWatchLayout(UIView *view, void (^laidOut)(UIView *view));
+
+// A list run on under the page's bars, as tall as the page instead of stopping short of them. What Spotify's
+// constraints leave the view is read off its frame whenever it is not the frame last given by SGRSetOwnFrame, and kept
+// while it is: that frame is the redesign's, and reading it would undo what was read. `top` is where the view starts,
+// `below` how much of its superview is under it (the tab bar and the now playing bar).
+typedef struct { CGFloat top, below; } SGRListRoom;
+SGRListRoom SGRListRoomOf(UIView *view);
+void SGRSetOwnFrame(UIView *view, CGRect frame);
+// The list's insets set to `inset`, with no safe area of its own on top, its rows kept where they were: a list at its
+// top stays there, and one a reload sent back to offset 0 (the first row under the bar) is put back under it.
+void SGRSetListInsets(UIScrollView *list, UIEdgeInsets inset);
+// The two together: `list` run on to the foot of its superview, from where it starts or, `fromTop`, from the superview's
+// top, with `top` over its rows (and where it started, from the top) and the bars below as its bottom inset, at least
+// `page`'s safe area.
+void SGRRunListToFoot(UIScrollView *list, UIView *page, CGFloat top, BOOL fromTop);
+// The page's list: the first collection view under `view` nearly as wide as it, kept on `view` under `key`.
+UICollectionView *SGRPageListIn(UIView *view, const void *key);
 
 // The first view under `root` (itself included) with the accessibility identifier, depth first. The
 // answer is kept weakly on `root` under `cacheKey` and searched for again only when it is gone, has
 // left `root` or changed its identifier. nil when there is none; a miss is not cached.
 UIView *SGRFindByIdentifier(UIView *root, NSString *identifier, const void *cacheKey);
+// SGRFindByIdentifier for every identifier at once, in one walk (Core's SGFindRememberedAll): `found[i]` is
+// identifiers[i]'s view or nil. For lookups made back to back with nothing between them that changes the tree.
+void SGRFindByIdentifiers(UIView *root, NSArray<NSString *> *identifiers, const void *const cacheKeys[], UIView *__strong found[]);
+
+// The first subview of `host` (not deeper) whose class is named `name` exactly.
+UIView *SGRChildNamed(UIView *host, NSString *name);
+
+// The navigation controller `view` is shown in, by its responders; nil outside one.
+UINavigationController *SGRNavigationOf(UIView *view);
+
+// A Swift class by module and name, under the mangled spelling or the dotted one the trees print; nil when the
+// app has neither.
+Class SGRSwiftClass(NSString *module, NSString *name);
+
+// A class of `module` whose mangled name carries a private discriminator (P33_...), found by the ending the trees
+// print. Walks every class, so it is for a %ctor, once.
+Class SGRPrivateSwiftClass(NSString *module, NSString *suffix);
+
+// Invisible for good, whatever Spotify does to it. `hidden` on the layer costs nothing and, unlike -[UIView
+// setHidden:], tells neither KVO nor the stack views, which is what makes it safe on Encore's layouts; an empty mask
+// holds when Spotify shows the view again with -setHidden:NO. Out of touches and VoiceOver, still there to be read
+// and fired.
+void SGRConceal(UIView *view);
 
 // Whether `view` is the profile avatar that opens the side drawer, in the Home, Search and Library headers. Known by
 // its identifier, which every version gives it: 9.1.88 draws it in an AdaptiveFaceContainer, 9.1.90 in an Encore
@@ -82,3 +131,8 @@ void SGRActivate(UIView *source);
 // else those for touch up inside. NO when the control has neither (an Encore control that reads its
 // touches through a gesture recognizer); what was found is logged once per class.
 BOOL SGRFire(UIControl *control);
+
+// Gives a scroll view the hard top edge effect, a dark band, and keeps the soft one SGREdgeEffect.x sets on every
+// other scroll view off it: for text that stays over a page scrolling under it (Home's kept title, HomeHeader.x).
+// iOS 26 on; nothing before.
+void SGRHardTopEdge(UIScrollView *scrollView);

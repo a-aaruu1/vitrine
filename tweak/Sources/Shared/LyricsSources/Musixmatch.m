@@ -54,6 +54,10 @@ static BOOL truthy(id value) {
     return [value respondsToSelector:@selector(boolValue)] && [value boolValue];
 }
 
+static NSInteger intOf(id value) {
+    return [value respondsToSelector:@selector(integerValue)] ? [value integerValue] : 0;
+}
+
 static NSInteger msOf(id seconds) {
     return [seconds respondsToSelector:@selector(doubleValue)] ? (NSInteger)llround([seconds doubleValue] * 1000) : 0;
 }
@@ -119,48 +123,29 @@ static void withToken(void (^use)(NSString *token)) {
 // o is from the line's start. A space entry ends the word before it; a word can come in more than
 // one entry ("Milion", "+", ","), so everything between two spaces is one word.
 static SGKaraokeLine *richsyncLine(NSDictionary *entry, NSInteger start, NSInteger end) {
-    NSMutableArray<SGKaraokeWord *> *words = [NSMutableArray array];
-    BOOL open = NO;     // the word last added may still take further entries
-    BOOL spaced = YES;  // a space has gone by since the last word, so the next one is not joined
+    NSMutableArray<SGKaraokePiece *> *pieces = [NSMutableArray array];
     id parts = entry[@"l"];
     for (NSDictionary *part in [parts isKindOfClass:NSArray.class] ? parts : @[]) {
         id text = dig(part, @"c");
         if (![text isKindOfClass:NSString.class]) continue;
-        NSInteger at = start + msOf(part[@"o"]);
-        NSString *trimmed = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        SGKaraokeWord *last = words.lastObject;
-        if (!trimmed.length) {
-            last.end = MAX(at, last.start);
-            open = NO;
-            spaced = YES;
-            continue;
-        }
-        if (open && !SGKaraokeUnspacedScript(trimmed)) {
-            last.text = [last.text stringByAppendingString:trimmed];
-            continue;
-        }
-        // A syllable of an unspaced script stands as a word of its own. Musixmatch times each one,
-        // but sends no space to end it, so running them together is what left a Japanese or Chinese
-        // line lighting up whole instead of sweeping.
-        last.end = MAX(at, last.start);
-        SGKaraokeWord *word = [SGKaraokeWord new];
-        word.text = trimmed;
-        word.start = at;
-        word.end = MAX(end, at);
-        word.joined = !spaced;
-        [words addObject:word];
-        open = !SGKaraokeUnspacedScript(trimmed);
-        spaced = NO;
+        SGKaraokePiece *piece = [SGKaraokePiece new];
+        piece.text = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        piece.start = start + msOf(part[@"o"]);
+        [pieces addObject:piece];
     }
-    if (!words.count) return nil;
-    SGKaraokeLine *line = [SGKaraokeLine new];
-    line.words = words;
-    line.start = start;
-    line.end = MAX(end, words.lastObject.end);
-    return line;
+    // An entry has no end of its own: a word is sung until the next one starts, past any space between
+    // them, and the last until the space after it or the line's end.
+    NSInteger until = end;
+    BOOL passed = NO;   // a word or a space comes after this entry
+    for (SGKaraokePiece *piece in pieces.reverseObjectEnumerator) {
+        if (piece.text.length) piece.end = MAX(until, piece.start);
+        if (piece.text.length || !passed) until = piece.start;
+        passed = YES;
+    }
+    return SGKaraokePieceLine(pieces, start, end);
 }
 
-static SGLyricsResult *fromRichsync(id body) {
+SGLyricsResult *SGMusixmatchRichsyncResult(id body) {
     if (![body isKindOfClass:NSArray.class]) return nil;
     NSMutableArray<NSNumber *> *starts = [NSMutableArray array];
     NSMutableArray<NSString *> *texts = [NSMutableArray array];
@@ -213,17 +198,7 @@ static SGLyricsResult *fromSubtitles(id body) {
 
 static SGLyricsResult *fromPlain(id body) {
     if (![body isKindOfClass:NSString.class] || ![body length]) return nil;
-    NSMutableArray<NSNumber *> *starts = [NSMutableArray array];
-    NSMutableArray<NSString *> *texts = [NSMutableArray array];
-    for (NSString *line in [body componentsSeparatedByString:@"\n"]) {
-        [starts addObject:@0];
-        [texts addObject:line.length ? line : @"♪"];
-    }
-    SGLyricsResult *lyrics = [SGLyricsResult new];
-    lyrics.starts = starts;
-    lyrics.texts = texts;
-    lyrics.karaokeLines = SGKaraokeStaticLines(texts);
-    return lyrics;
+    return SGLyricsPlainResult([body componentsSeparatedByString:@"\n"]);
 }
 
 // macro.subtitles.get runs the matcher and every lookup in one call; the best shape it has wins.
@@ -231,7 +206,7 @@ static SGLyricsResult *fromCalls(NSDictionary *calls) {
     if (truthy(dig(calls, @"matcher.track.get/message/body/track/instrumental"))) return nil;
     id richsync = dig(calls, @"track.richsync.get/message/body/richsync");
     SGLyricsResult *lyrics = nil;
-    if (richsync && !truthy(dig(richsync, @"restricted"))) lyrics = fromRichsync(jsonOf(dig(richsync, @"richsync_body")));
+    if (richsync && !truthy(dig(richsync, @"restricted"))) lyrics = SGMusixmatchRichsyncResult(jsonOf(dig(richsync, @"richsync_body")));
     if (lyrics) return lyrics;
     id list = dig(calls, @"track.subtitles.get/message/body/subtitle_list");
     id subtitle = [list isKindOfClass:NSArray.class] && [list count] ? dig([list firstObject], @"subtitle") : nil;
@@ -269,7 +244,7 @@ static SGLyricsResult *withTrack(SGLyricsResult *lyrics, id track) {
     if ([title isKindOfClass:NSString.class]) result.title = title;
     if ([artist isKindOfClass:NSString.class]) result.artist = artist;
     if ([album isKindOfClass:NSString.class]) result.album = album;
-    result.seconds = [track[@"track_length"] integerValue];
+    result.seconds = intOf(track[@"track_length"]);
     result.instrumental = truthy(track[@"instrumental"]);
     return result;
 }
@@ -290,7 +265,7 @@ static void ask(NSString *trackID, NSDictionary<NSString *, NSString *> *match, 
         } mutableCopy];
         [query addEntriesFromDictionary:match];
         call(@"macro.subtitles.get", query, ^(NSDictionary *message) {
-            NSInteger status = [dig(message, @"header/status_code") integerValue];
+            NSInteger status = intOf(dig(message, @"header/status_code"));
             if (status == 401 && renewToken) {
                 SGLog(@"musixmatch: token no longer accepted (hint %@), asking for a new one", dig(message, @"header/hint"));
                 [NSUserDefaults.standardUserDefaults removeObjectForKey:kTokenKey];
@@ -387,7 +362,7 @@ static void translationPage(NSString *token, NSString *commontrack, NSString *co
         @"comment_format": @"text", @"part": @"user", @"translation_fields_set": @"minimal",
         @"page": @(page).stringValue, @"page_size": @(kTranslationPage).stringValue,
     }, ^(NSDictionary *message) {
-        NSInteger status = [dig(message, @"header/status_code") integerValue];
+        NSInteger status = intOf(dig(message, @"header/status_code"));
         if (status != 200) {
             done(status);
             return;
@@ -456,7 +431,7 @@ static void askTranslations(NSString *trackID, NSString *language, BOOL renewTok
         NSMutableDictionary<NSString *, NSString *> *query = [match mutableCopy];
         query[@"usertoken"] = token;
         call(@"matcher.track.get", query, ^(NSDictionary *message) {
-            NSInteger status = [dig(message, @"header/status_code") integerValue];
+            NSInteger status = intOf(dig(message, @"header/status_code"));
             noteCommontrack(trackID, dig(message, @"body/track/commontrack_id"));
             NSString *commontrack = status == 200 ? sg_commontracks[trackID] : nil;
             if (commontrack) translate(commontrack);

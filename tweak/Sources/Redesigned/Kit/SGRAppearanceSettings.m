@@ -2,6 +2,7 @@
 #import "Settings/SGModPage.h"
 #import "Settings/SGPageStyle.h"
 #import "SGRAccent.h"
+#import "SGRHeaderInfo.h"
 
 // The preset is read off the color stored, so the hooks keep the one key they read and a color set before
 // presets existed stays in effect: Apple Music's red reads as Apple Music, Spotify's own (-1) as Spotify, and
@@ -9,6 +10,30 @@
 // is put aside while a preset is in place, so Custom brings it back.
 static NSArray<NSString *> *presets(void) {
     return @[@"Spotify", @"Apple Music", @"Custom"];
+}
+
+// A switch where the device has the private APIs legacy glass leans on (SGLegacyGlassAvailable()); where
+// it has not, a row that says so, and panes stay a plain blur.
+static SGModRow *legacyGlassRow(void) {
+    if (SGLegacyGlassAvailable()) {
+        NSString *subtitle = [NSString stringWithFormat:@"An approximation of iOS 26's glass for the navbar and round buttons, on iOS %@.",
+                              UIDevice.currentDevice.systemVersion];
+        SGModRow *row = SGOptionRow(@"Legacy Liquid Glass", subtitle, SGKeyLegacyGlass);
+        // Every pane is made one way or the other at launch (SGUseLegacyGlass), so a change waits for the restart, as
+        // Redesigned UI's does.
+        row.changed = ^(BOOL on) {
+            SGOfferRestart(on ? @"The glass takes over when Spotify starts again. Spotify closes now; open it again to see it."
+                              : @"The plain blur comes back when Spotify starts again. Spotify closes now; open it again to see it.");
+        };
+        return SGWithSymbol(row, @"cube.transparent");
+    }
+    NSString *reason = [NSString stringWithFormat:@"This phone (iOS %@) doesn't have the private APIs it leans on, so glass panes stay a plain blur.", UIDevice.currentDevice.systemVersion];
+    SGModRow *row = SGStatActionRow(@"Legacy Liquid Glass", nil, ^NSString *{ return @"Unavailable"; }, ^{
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Legacy Liquid Glass" message:reason preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+        [SGTopController() presentViewController:alert animated:YES completion:nil];
+    });
+    return SGWithSymbol(row, @"cube.transparent");
 }
 
 static NSInteger preset(void) {
@@ -36,9 +61,14 @@ NSArray<SGModRow *> *SGRAppearanceRows(void) {
         });
     });
     colour.swatch = ^UIColor *{ return SGColorRGB(SGRAccentRGB()); };
-    return @[
+    NSMutableArray<SGModRow *> *rows = [@[
         SGWithSymbol(menu, @"paintpalette"),
         SGWithSymbol(colour, @"eyedropper"),
         SGWithSymbol(SGOptionRow(@"Plain checkmark", @"A saved song's tick without its circle, in the accent", SGRKeyPlainCheck), @"checkmark"),
-    ];
+        SGWithSymbol(SGSwitchRow(@"Full bleed covers", @"Album and playlist covers across the top. Off, a square cover; "
+                                 @"an animated cover still fills the top", SGRKeyFullBleedCovers), @"photo"),
+    ] mutableCopy];
+    // From iOS 26 the system draws the glass itself, so the switch gets no row.
+    if (SGBelowiOS26()) [rows addObject:legacyGlassRow()];
+    return rows;
 }

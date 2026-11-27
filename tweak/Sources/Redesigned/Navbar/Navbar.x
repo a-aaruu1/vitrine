@@ -210,14 +210,20 @@ void SGRComposeTabBar(UIView *tabBar) {
     NSMutableArray<UIView *> *wanted = [NSMutableArray array];
     NSMutableSet<NSString *> *placed = [NSMutableSet set];
     NSMutableSet<NSString *> *keep = [NSMutableSet set];
-    NSSet<NSString *> *split = SGEnabled(SGRKeyNavbar) ? [NSSet setWithArray:SGRNavbarSplit()] : nil;
+    NSArray<NSDictionary *> *splitList = SGEnabled(SGRKeyNavbar) ? SGRNavbarSplitShown() : @[];
+    NSMutableSet<NSString *> *splitStock = [NSMutableSet set];
+    for (NSDictionary *entry in splitList) if (!entry[SGRNavbarURI] && [entry[SGRNavbarID] isKindOfClass:NSString.class]) [splitStock addObject:entry[SGRNavbarID]];
     NSMutableSet<UIView *> *apart = [NSMutableSet set];
+    // Where the settings' tab list puts each tab, for the one place a split tab is not sent to the end (below).
+    NSMutableDictionary<NSString *, NSNumber *> *layoutRank = [NSMutableDictionary dictionary];
+    NSMapTable<UIView *, NSNumber *> *itemRank = [NSMapTable strongToStrongObjectsMapTable];
 
     if (SGEnabled(SGRKeyNavbar)) {
         for (NSDictionary *entry in SGRNavbarLayout()) {
             NSString *ident = entry[SGRNavbarID];
             if (![ident isKindOfClass:NSString.class] || [placed containsObject:ident]) continue;
             [placed addObject:ident];
+            layoutRank[ident] = @(layoutRank.count);
             BOOL hidden = [entry[SGRNavbarHidden] boolValue];
             if (entry[SGRNavbarURI]) {
                 if (hidden) continue;
@@ -226,11 +232,11 @@ void SGRComposeTabBar(UIView *tabBar) {
                 else custom[ident] = item = [[SGRTabItemView alloc] initWithEntry:entry];
                 [keep addObject:ident];
                 [wanted addObject:item];
-                if ([split containsObject:ident]) [apart addObject:item];
-            } else if (stockViews[ident]) {
+                [itemRank setObject:layoutRank[ident] forKey:item];
+            } else if (stockViews[ident] && ![splitStock containsObject:ident]) {
                 stockViews[ident].hidden = hidden;
                 [wanted addObject:stockViews[ident]];
-                if ([split containsObject:ident]) [apart addObject:stockViews[ident]];
+                [itemRank setObject:layoutRank[ident] forKey:stockViews[ident]];
             }
         }
     }
@@ -238,10 +244,30 @@ void SGRComposeTabBar(UIView *tabBar) {
     // Spotify's own place, at the end, shown.
     for (NSString *ident in sg_stockOrder) {
         UIView *item = stockViews[ident];
-        if (!item || [wanted containsObject:item]) continue;
+        if (!item || [wanted containsObject:item] || [splitStock containsObject:ident]) continue;
         item.hidden = NO;
         [wanted addObject:item];
-        if ([split containsObject:ident]) [apart addObject:item];
+    }
+    // The split tabs, from their own list: the mod's own are separate from the bar's, Spotify's are shown.
+    NSMutableSet<NSString *> *placedApart = [NSMutableSet set];
+    for (NSDictionary *entry in splitList) {
+        NSString *ident = entry[SGRNavbarID];
+        if (![ident isKindOfClass:NSString.class] || [placedApart containsObject:ident]) continue;
+        [placedApart addObject:ident];
+        if (entry[SGRNavbarURI]) {
+            SGRTabItemView *item = custom[ident];
+            if (item) [item applyEntry:entry];
+            else custom[ident] = item = [[SGRTabItemView alloc] initWithEntry:entry];
+            [keep addObject:ident];
+            [wanted addObject:item];
+            [apart addObject:item];
+            if (layoutRank[ident]) [itemRank setObject:layoutRank[ident] forKey:item];
+        } else if (stockViews[ident]) {
+            stockViews[ident].hidden = NO;
+            [wanted addObject:stockViews[ident]];
+            [apart addObject:stockViews[ident]];
+            if (layoutRank[ident]) [itemRank setObject:layoutRank[ident] forKey:stockViews[ident]];
+        }
     }
     for (NSString *ident in custom.allKeys) {
         if ([keep containsObject:ident]) continue;
@@ -267,10 +293,28 @@ void SGRComposeTabBar(UIView *tabBar) {
         [([apart containsObject:item] ? trailing : order) addObject:item];
     }
     NSUInteger apartCount = order.count ? trailing.count : 0;
-    [order addObjectsFromArray:trailing];
-    [order enumerateObjectsUsingBlock:^(UIView *item, NSUInteger i, BOOL *stop) {
-        objc_setAssociatedObject(item, &kApartKey, i + apartCount >= order.count ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }];
+    // The fallback bar folds a short bar's split tab into its one capsule (TabBarLegacy.x), and there it is a tab
+    // like the rest: it stands where the tab list in the settings puts it, not at the end. A split tab the list
+    // does not name (one of the mod's own picked only for the split) has no place there and stays last.
+    BOOL fold = apartCount && SGRLegacyTabBarOn() && order.count + trailing.count <= SGRLegacyFoldLimit;
+    NSSet<UIView *> *apartSet = [NSSet setWithArray:trailing];
+    if (fold) {
+        for (UIView *item in trailing) {
+            NSNumber *rank = [itemRank objectForKey:item];
+            NSUInteger at = order.count;
+            for (NSUInteger j = 0; rank && j < order.count; j++) {
+                NSNumber *other = [itemRank objectForKey:order[j]];
+                if (!other || other.unsignedIntegerValue > rank.unsignedIntegerValue) { at = j; break; }
+            }
+            [order insertObject:item atIndex:at];
+        }
+    } else {
+        [order addObjectsFromArray:trailing];
+    }
+    // Marked by the tab itself: a folded one is not the last.
+    for (UIView *item in order) {
+        objc_setAssociatedObject(item, &kApartKey, apartCount && [apartSet containsObject:item] ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     sg_row = stack;
     if (![order isEqualToArray:objc_getAssociatedObject(stack, &kOrderKey)] || apartCount != sg_apartCount) {
         sg_apartCount = apartCount;
@@ -281,10 +325,16 @@ void SGRComposeTabBar(UIView *tabBar) {
 
 // Spotify placed the icon and the label for the width it measured (trees/test5.txt: x 28 in a
 // 134pt slot, the center of the 80pt it had with five tabs) and lays the item out no further
-// once the slot changes. Assigning the centers back sends them through the hooks below.
+// once the slot changes. Assigning the centers back sends them through the hooks below, which look no further
+// up for the slot than the deepest of these views sits in one (3 in Spotify's items: trees, 2026-10).
+static NSUInteger sg_slotDepth;
 static void centreContents(UIView *item) {
     SGForEachView(item, ^(UIView *v) {
-        if ([v isKindOfClass:%c(SPTEncoreIconView)] || [v isKindOfClass:%c(SPTEncoreLabel)]) v.center = v.center;
+        if (![v isKindOfClass:%c(SPTEncoreIconView)] && ![v isKindOfClass:%c(SPTEncoreLabel)]) return;
+        NSUInteger depth = 1;
+        for (UIView *up = v.superview; up && up != item; up = up.superview) depth++;
+        if (depth > sg_slotDepth) sg_slotDepth = depth;
+        v.center = v.center;
     });
 }
 
@@ -323,7 +373,9 @@ static CGFloat slotCentreX(UIView *view) {
     UIStackView *row = sg_row;
     if (!row) return NAN;
     UIView *slot = nil;
-    for (UIView *v = view; v.superview; v = v.superview) if (v.superview == row) { slot = v; break; }
+    // No depth seen yet means no row centred yet: the walk goes all the way up.
+    NSUInteger steps = 0, limit = sg_slotDepth ? sg_slotDepth : NSUIntegerMax;
+    for (UIView *v = view; v.superview && steps++ <= limit; v = v.superview) if (v.superview == row) { slot = v; break; }
     if (!slot) return NAN;
     return [slot convertPoint:CGPointMake(CGRectGetMidX(slot.bounds), 0) toView:view.superview].x;
 }
@@ -395,8 +447,37 @@ void SGRRefreshTabBar(void) {
 // What the row settled on, logged whenever it changes: `make log` then says whether the items fit,
 // what is holding their width, and in what order the bar ended up.
 void SGRLogTabBarRow(UIView *tabBar) {
-    UIStackView *stack = SGRowIn(tabBar);
+    // The row SGRComposeTabBar found in this bar on the same pass, just before.
+    UIStackView *stack = sg_row;
     if (!stack) return;
+    // The line is written out only when a frame, an item, the stack's settings or the boxes read off them changed. shortcut: items
+    // past the 16th are not compared, raise it if a bar ever holds more.
+    struct {
+        CGRect bar, stack, icon, label;
+        NSInteger axis, distribution, alignment;
+        CGFloat spacing;
+        NSUInteger count;
+        struct { const void *item; CGRect frame; BOOL hidden; } items[16];
+    } key;
+    memset(&key, 0, sizeof key);   // padding too, for memcmp
+    key.bar = tabBar.frame;
+    key.stack = stack.frame;
+    key.icon = sg_iconBox;
+    key.label = sg_labelBox;
+    key.axis = stack.axis;
+    key.distribution = stack.distribution;
+    key.alignment = stack.alignment;
+    key.spacing = stack.spacing;
+    for (UIView *item in stack.arrangedSubviews) {
+        NSUInteger i = key.count++;
+        if (i >= 16) continue;
+        key.items[i].item = (__bridge const void *)item;
+        key.items[i].frame = item.frame;
+        key.items[i].hidden = item.hidden;
+    }
+    static typeof(key) lastKey;
+    if (!memcmp(&key, &lastKey, sizeof key)) return;
+    memcpy(&lastKey, &key, sizeof key);
     NSMutableString *out = [NSMutableString stringWithFormat:@"row in %@ %@, icon %@ label %@, stack %@ axis %ld dist %ld align %ld spacing %.1f autolayout %d",
                             NSStringFromClass(tabBar.class), NSStringFromCGRect(tabBar.frame),
                             NSStringFromCGRect(sg_iconBox), NSStringFromCGRect(sg_labelBox), NSStringFromCGRect(stack.frame),
@@ -440,6 +521,7 @@ void SGRLogTabBarRow(UIView *tabBar) {
 
 %ctor {
     if (!SGRedesignedUI()) return;
+    SGRMigrateNavbarSplit();
     %init;
     SGRequireClasses(@[
         @"SPNavigationController",

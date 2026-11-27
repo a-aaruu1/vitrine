@@ -10,6 +10,7 @@ const CGFloat SGRRadiusCard = 16;
 const CGFloat SGRRadiusCover = 8;
 const CGFloat SGRRadiusThumb = 6;
 const CGFloat SGRGlassCircleSize = 44;
+const CGFloat SGRTitlePadding = 18;
 const CGFloat SGRActionHeight = 48;
 const CGFloat SGRActionSpacing = 12;
 const CGFloat SGRGlassSpacing = 16;
@@ -51,6 +52,13 @@ UIColor *SGRSolidGlassFill(void) {
     return [UIColor colorWithWhite:1 alpha:0.16];
 }
 
+UIColor *SGRGlassFilmColor(void) {
+    static UIColor *color;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ color = [UIColor colorWithWhite:1 alpha:0.16]; });
+    return color;
+}
+
 UIColor *SGRHairline(void) {
     return [UIColor colorWithWhite:1 alpha:SGRIncreaseContrast() ? 0.20 : 0.12];
 }
@@ -66,9 +74,20 @@ UIColor *SGRElevated(UIColor *field) {
 UIFont *SGRFont(UIFontTextStyle style, UIFontWeight weight, UIContentSizeCategory largest) {
     UIContentSizeCategory current = UIApplication.sharedApplication.preferredContentSizeCategory;
     if (largest && UIContentSizeCategoryCompareToCategory(current, largest) == NSOrderedDescending) current = largest;
+    // Asked for on every layout pass of the Search and Library headers. A font is immutable and the same inputs
+    // give the same one, so each is kept per input; the live category above and Bold Text are read on every call,
+    // so a Dynamic Type change is a new key at once.
+    // A string key: an array's hash is its count, so array keys would all collide.
+    static NSMutableDictionary<NSString *, UIFont *> *fonts;
+    if (!fonts) fonts = [NSMutableDictionary dictionary];
+    NSString *key = [NSString stringWithFormat:@"%@|%g|%@|%@|%d", style, weight, largest ?: @"", current ?: @"", UIAccessibilityIsBoldTextEnabled()];
+    UIFont *font = fonts[key];
+    if (font) return font;
     UITraitCollection *traits = [UITraitCollection traitCollectionWithPreferredContentSizeCategory:current];
     CGFloat size = [UIFont preferredFontForTextStyle:style compatibleWithTraitCollection:traits].pointSize;
-    return [UIFont systemFontOfSize:size weight:weight];
+    font = [UIFont systemFontOfSize:size weight:weight];
+    fonts[key] = font;
+    return font;
 }
 
 UIFont *SGRMonospacedDigitsFont(UIFont *font) {
